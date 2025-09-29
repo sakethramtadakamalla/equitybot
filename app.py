@@ -83,11 +83,10 @@ PEER_MAPPING = {
 
 
 # ======================================================================
-# DATA FETCHING AND ANALYSIS FUNCTIONS (CORRECTED)
+# DATA FETCHING AND ANALYSIS FUNCTIONS
 # ======================================================================
 
 def get_scalar(value):
-    """Helper function to ensure a value is a single number, not a pandas Series."""
     if isinstance(value, pd.Series):
         return value.iloc[0] if not value.empty else None
     return value
@@ -166,7 +165,6 @@ def interpret_technical(df):
     analysis = []
     latest = df.iloc[-1]
 
-    # Use the get_scalar helper function to ensure we compare single numbers
     sma_50 = get_scalar(latest['sma_50'])
     sma_200 = get_scalar(latest['sma_200'])
     bb_upper = get_scalar(latest['bb_upper'])
@@ -230,7 +228,6 @@ def generate_recommendation(fundamentals, tech_analysis):
     if score >= 1: return "HOLD"
     return "SELL"
 
-# --- (The generate_pdf_report function remains the same as the previous version) ---
 def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation):
     stock_name = fundamentals.get('Symbol', 'STOCK')
     filename = f"{stock_name.replace('.', '_')}_Full_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
@@ -238,6 +235,9 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
     doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=inch*0.5, leftMargin=inch*0.5, topMargin=inch*0.5, bottomMargin=inch*0.5)
     story = []
     styles = getSampleStyleSheet()
+
+    # THIS IS THE MISSING LINE THAT IS NOW ADDED
+    styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY))
 
     story.append(Paragraph(f"Saketh Equity Research Report: {fundamentals.get('Company Name', '')}", styles['h1']))
     story.append(Paragraph(f"Date: {datetime.now().strftime('%d %B %Y')}", styles['h2']))
@@ -322,7 +322,7 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
     return filename
 
 # ======================================================================
-# FLASK WEB ROUTES (The part that makes it a website)
+# FLASK WEB ROUTES
 # ======================================================================
 
 def create_report(stock_ticker):
