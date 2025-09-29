@@ -17,80 +17,47 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import yfinance as yf
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, Frame, PageTemplate
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.units import inch
 from io import BytesIO
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
-# ------------------------
-# Flask App Initialization
-# ------------------------
+# --- Flask App Initialization ---
 app = Flask(__name__)
 OUTPUT_FOLDER = 'outputs'
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# ------------------------
-# DATA FOR THE FRONT-END & PEER ANALYSIS
-# ------------------------
+# --- Data for Front-End & Peer Analysis ---
 SECTOR_STOCK_MAPPING = {
-    "Banking & Financials": [
-        {"name": "HDFC Bank", "ticker": "HDFCBANK.NS"},
-        {"name": "ICICI Bank", "ticker": "ICICIBANK.NS"},
-        {"name": "State Bank of India", "ticker": "SBIN.NS"},
-        {"name": "Kotak Mahindra Bank", "ticker": "KOTAKBANK.NS"},
-        {"name": "Axis Bank", "ticker": "AXISBANK.NS"},
-        {"name": "Bajaj Finance", "ticker": "BAJFINANCE.NS"},
-    ],
-    "IT": [
-        {"name": "Infosys", "ticker": "INFY.NS"},
-        {"name": "TCS", "ticker": "TCS.NS"},
-        {"name": "Wipro", "ticker": "WIPRO.NS"},
-        {"name": "Tech Mahindra", "ticker": "TECHM.NS"},
-        {"name": "HCL Technologies", "ticker": "HCLTECH.NS"},
-    ],
-    "Energy": [
-        {"name": "Reliance Industries", "ticker": "RELIANCE.NS"},
-        {"name": "ONGC", "ticker": "ONGC.NS"},
-        {"name": "NTPC", "ticker": "NTPC.NS"},
-        {"name": "Power Grid", "ticker": "POWERGRID.NS"},
-        {"name": "Adani Power", "ticker": "ADANIPOWER.NS"},
-        {"name": "Tata Power", "ticker": "TATAPOWER.NS"},
-    ],
-    "Automobiles": [
-        {"name": "Tata Motors", "ticker": "TATAMOTORS.NS"},
-        {"name": "Mahindra and Mahindra", "ticker": "M&M.NS"},
-        {"name": "Maruti Suzuki", "ticker": "MARUTI.NS"},
-        {"name": "Eicher Motors", "ticker": "EICHERMOT.NS"},
-        {"name": "Bajaj Auto", "ticker": "BAJAJ-AUTO.NS"},
-    ],
+    "Banking & Financials": [{"name": "HDFC Bank", "ticker": "HDFCBANK.NS"}, {"name": "ICICI Bank", "ticker": "ICICIBANK.NS"}, {"name": "State Bank of India", "ticker": "SBIN.NS"}, {"name": "Kotak Mahindra Bank", "ticker": "KOTAKBANK.NS"}, {"name": "Axis Bank", "ticker": "AXISBANK.NS"}, {"name": "Bajaj Finance", "ticker": "BAJFINANCE.NS"}],
+    "IT": [{"name": "Infosys", "ticker": "INFY.NS"}, {"name": "TCS", "ticker": "TCS.NS"}, {"name": "Wipro", "ticker": "WIPRO.NS"}, {"name": "Tech Mahindra", "ticker": "TECHM.NS"}, {"name": "HCL Technologies", "ticker": "HCLTECH.NS"}],
+    "Energy": [{"name": "Reliance Industries", "ticker": "RELIANCE.NS"}, {"name": "ONGC", "ticker": "ONGC.NS"}, {"name": "NTPC", "ticker": "NTPC.NS"}, {"name": "Power Grid", "ticker": "POWERGRID.NS"}, {"name": "Adani Power", "ticker": "ADANIPOWER.NS"}, {"name": "Tata Power", "ticker": "TATAPOWER.NS"}],
+    "Automobiles": [{"name": "Tata Motors", "ticker": "TATAMOTORS.NS"}, {"name": "Mahindra and Mahindra", "ticker": "M&M.NS"}, {"name": "Maruti Suzuki", "ticker": "MARUTI.NS"}, {"name": "Eicher Motors", "ticker": "EICHERMOT.NS"}, {"name": "Bajaj Auto", "ticker": "BAJAJ-AUTO.NS"}]
 }
-
 PEER_MAPPING = {
-    "HDFCBANK.NS": ["ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"],
-    "ICICIBANK.NS": ["HDFCBANK.NS", "AXISBANK.NS", "KOTAKBANK.NS", "SBIN.NS"],
-    "SBIN.NS": ["HDFCBANK.NS", "ICICIBANK.NS", "PNB.NS", "BANKBARODA.NS"],
-    "INFY.NS": ["TCS.NS", "WIPRO.NS", "TECHM.NS", "HCLTECH.NS"],
-    "TCS.NS": ["INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS"],
-    "RELIANCE.NS": ["ONGC.NS", "TATAPOWER.NS", "ADANIPOWER.NS"],
-    "TATAMOTORS.NS": ["MARUTI.NS", "M&M.NS", "EICHERMOT.NS"],
+    "HDFCBANK.NS": ["ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"], "ICICIBANK.NS": ["HDFCBANK.NS", "AXISBANK.NS", "KOTAKBANK.NS", "SBIN.NS"], "SBIN.NS": ["HDFCBANK.NS", "ICICIBANK.NS", "PNB.NS", "BANKBARODA.NS"],
+    "INFY.NS": ["TCS.NS", "WIPRO.NS", "TECHM.NS", "HCLTECH.NS"], "TCS.NS": ["INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS"],
+    "RELIANCE.NS": ["ONGC.NS", "TATAPOWER.NS", "ADANIPOWER.NS"], "TATAMOTORS.NS": ["MARUTI.NS", "M&M.NS", "EICHERMOT.NS"]
 }
-
 
 # ======================================================================
 # DATA FETCHING AND ANALYSIS FUNCTIONS (PITCH-PERFECT VERSION)
 # ======================================================================
 
+def get_scalar(value):
+    if isinstance(value, pd.Series): return value.iloc[0] if not value.empty else None
+    return value
+
 def fetch_logo(info):
     try:
         if 'logo_url' in info and info['logo_url']:
             response = requests.get(info['logo_url'], stream=True, timeout=5)
-            if response.status_code == 200:
-                return ImageReader(BytesIO(response.content))
+            if response.status_code == 200: return ImageReader(BytesIO(response.content))
     except Exception as e:
         print(f"Could not fetch logo: {e}")
     return None
@@ -129,14 +96,10 @@ def fetch_company_info(symbol):
             'info': info, 'logo_image': logo_image,
             'Symbol': symbol, 'Company Name': info.get('longName', 'N/A'),
             'Description': info.get('longBusinessSummary', 'N/A'),
-            'Market Cap': f"₹{info.get('marketCap', 0) / unit_divisor:,.2f} Cr",
-            'Current Price': f"₹{info.get('currentPrice', 'N/A')}",
-            'Trailing PE': info.get('trailingPE'), 'Forward PE': info.get('forwardPE'),
-            'Price/Book': info.get('priceToBook'),
-            'ROE': info.get('returnOnEquity'),
-            'Profit Margin': info.get('profitMargins'),
-            'Debt to Equity': info.get('debtToEquity'),
-            'Current Ratio': info.get('currentRatio'),
+            'Market Cap': f"₹{info.get('marketCap', 0) / unit_divisor:,.2f} Cr", 'Current Price': f"₹{info.get('currentPrice', 'N/A')}",
+            'Trailing PE': info.get('trailingPE'), 'Forward PE': info.get('forwardPE'), 'Price/Book': info.get('priceToBook'),
+            'ROE': info.get('returnOnEquity'), 'Profit Margin': info.get('profitMargins'), 'Debt to Equity': info.get('debtToEquity'),
+            'Current Ratio': info.get('currentRatio'), 'Dividend Yield': info.get('dividendYield'),
             'companyOfficers': info.get('companyOfficers', [])
         }
     except Exception as e:
@@ -159,11 +122,7 @@ def get_peer_comparison(peers):
     for peer_symbol in peers:
         try:
             info = yf.Ticker(peer_symbol).info
-            peer_details.append({
-                'name': info.get('shortName', peer_symbol),
-                'pe': info.get('trailingPE'),
-                'roe': info.get('returnOnEquity')
-            })
+            peer_details.append({'name': info.get('shortName', peer_symbol), 'pe': info.get('trailingPE'), 'roe': info.get('returnOnEquity')})
         except Exception:
             continue
     return pd.DataFrame(peer_details)
@@ -173,160 +132,155 @@ def interpret_technical(df):
     if df is None or df.empty: return ["Technical data not available."]
     latest = df.iloc[-1]
 
-    sma_50 = latest.get('sma_50')
-    sma_200 = latest.get('sma_200')
-    close_price = latest.get('Close')
+    sma_50 = get_scalar(latest.get('sma_50'))
+    sma_200 = get_scalar(latest.get('sma_200'))
+    close_price = get_scalar(latest.get('Close'))
+    bb_upper = get_scalar(latest.get('bb_upper'))
+    macd_line = get_scalar(latest.get('macd_line'))
+    macd_signal = get_scalar(latest.get('macd_signal'))
+    rsi = get_scalar(latest.get('rsi'))
 
-    if pd.notna(sma_50) and pd.notna(sma_200):
-        if sma_50 > sma_200:
-            analysis.append("<b>Trend:</b> Bullish Signal (Golden Cross). The 50-day average is above the 200-day average.")
-        else:
-            analysis.append("<b>Trend:</b> Bearish Signal (Death Cross). The 50-day average is below the 200-day average.")
-    # Add more interpretations as needed...
+    if sma_50 is not None and sma_200 is not None:
+        analysis.append("<b>Trend (SMA):</b> " + ("Bullish (Golden Cross)" if sma_50 > sma_200 else "Bearish (Death Cross)"))
+    if bb_upper is not None and close_price is not None:
+        analysis.append("<b>Volatility (Bollinger):</b> " + ("High (Price above upper band)" if close_price > bb_upper else "Normal"))
+    if macd_line is not None and macd_signal is not None:
+        analysis.append("<b>Momentum (MACD):</b> " + ("Positive (MACD above signal)" if macd_line > macd_signal else "Negative (MACD below signal)"))
+    if rsi is not None:
+        analysis.append(f"<b>Strength (RSI):</b> {('Overbought' if rsi > 70 else 'Oversold' if rsi < 30 else 'Neutral')} at {rsi:.2f}")
+
     return analysis
 
 def interpret_fundamental(fundamentals):
-    # Same as before
     analysis = []
-    if fundamentals.get('Trailing PE'):
-        pe = fundamentals['Trailing PE']
-        valuation = "high" if pe > 30 else "low" if pe < 15 else "fair"
-        analysis.append(f"<b>Valuation:</b> A P/E Ratio of {pe:.2f} suggests a {valuation} valuation.")
-    if fundamentals.get('ROE'):
-        roe = fundamentals['ROE']
-        quality = "strong" if roe > 0.15 else "moderate"
-        analysis.append(f"<b>Profitability:</b> A Return on Equity of {roe*100:.2f}% indicates {quality} efficiency.")
-    if fundamentals.get('Debt to Equity'):
-        de = fundamentals['Debt to Equity']
-        risk = "high" if de > 150 else "manageable"
-        analysis.append(f"<b>Financial Health:</b> Debt to Equity of {de:.2f} suggests {risk} risk.")
+    if fundamentals.get('Trailing PE'): analysis.append(f"<b>Valuation (P/E):</b> {'High' if fundamentals['Trailing PE'] > 30 else 'Low' if fundamentals['Trailing PE'] < 15 else 'Fair'} at {fundamentals['Trailing PE']:.2f}")
+    if fundamentals.get('ROE'): analysis.append(f"<b>Profitability (ROE):</b> {'Strong' if fundamentals['ROE'] > 0.15 else 'Moderate'} at {fundamentals['ROE']*100:.2f}%")
+    de = fundamentals.get('Debt to Equity')
+    if de is not None: analysis.append(f"<b>Health (D/E):</b> {'High Risk' if de > 150 else 'Manageable'} at {de:.2f}")
     return analysis
 
-
 def generate_recommendation(fundamentals, tech_analysis):
-    # Same as before
     score = 0
     if fundamentals.get('ROE') and fundamentals['ROE'] > 0.15: score += 1
     if fundamentals.get('Trailing PE') and fundamentals['Trailing PE'] < 30: score += 1
-    if fundamentals.get('Debt to Equity') and fundamentals['Debt to Equity'] < 150: score += 1
+    if fundamentals.get('Debt to Equity') is not None and fundamentals['Debt to Equity'] < 150: score += 1
     if any("Bullish" in s for s in tech_analysis): score += 1
     if any("Overbought" in s for s in tech_analysis): score -= 1
     if score >= 3: return "BUY"
     if score >= 1: return "HOLD"
     return "SELL"
 
-# --- NEW: Function to draw a border on each page ---
-def draw_border(canvas, doc):
-    canvas.saveState()
-    canvas.setStrokeColor(colors.HexColor('#000080')) # Navy Blue
-    canvas.setLineWidth(2)
-    canvas.rect(
-        doc.leftMargin,
-        doc.bottomMargin,
-        doc.width,
-        doc.height
-    )
-    canvas.restoreState()
+# --- PDF Generation Engine ---
+class ReportPDF:
+    def __init__(self, filepath, fundamentals):
+        self.doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=inch*0.5, leftMargin=inch*0.5, topMargin=inch*0.5, bottomMargin=inch*0.5)
+        self.styles = getSampleStyleSheet()
+        self.styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY, leading=14))
+        self.story = []
+        self.fundamentals = fundamentals
 
-def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation):
-    stock_name = fundamentals.get('Symbol', 'STOCK')
-    filename = f"{stock_name.replace('.', '_')}_Pro_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
-    filepath = os.path.join(OUTPUT_FOLDER, filename)
+    def draw_border(self, canvas, doc):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor('#000080')) # Navy Blue
+        canvas.setLineWidth(3)
+        canvas.rect(doc.leftMargin, doc.bottomMargin, doc.width, doc.height)
+        canvas.restoreState()
 
-    # Pass the border function to the document template
-    doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=inch*0.75, leftMargin=inch*0.75, topMargin=inch*0.75, bottomMargin=inch*0.75)
+    def add_title_page(self):
+        self.story.append(Spacer(1, 2*inch))
+        logo_image = self.fundamentals.get('logo_image')
+        if logo_image:
+            logo_image.drawWidth = 1.5*inch; logo_image.drawHeight = 1.5*inch
+            self.story.append(logo_image)
+            self.story.append(Spacer(1, 0.25*inch))
 
-    story = []
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY, leading=14))
+        self.story.append(Paragraph("Saketh Equity Research", self.styles['Title']))
+        self.story.append(Spacer(1, 0.5*inch))
+        self.story.append(Paragraph(f"Professional Equity Report For:", ParagraphStyle(name='sub', parent=self.styles['h2'], alignment=TA_CENTER)))
+        self.story.append(Paragraph(self.fundamentals.get('Company Name', ''), ParagraphStyle(name='main', parent=self.styles['h1'], alignment=TA_CENTER)))
+        self.story.append(Spacer(1, 0.2*inch))
+        self.story.append(Paragraph(f"Ticker: {self.fundamentals.get('Symbol', '')}", ParagraphStyle(name='ticker', parent=self.styles['h2'], alignment=TA_CENTER)))
+        self.story.append(Spacer(1, 2*inch))
+        self.story.append(Paragraph(f"Report Generated: {datetime.now().strftime('%A, %B %d, %Y')}", self.styles['Normal']))
+        self.story.append(PageBreak())
 
-    # --- PDF Header with Logo ---
-    logo_image = fundamentals.get('logo_image')
-    title = Paragraph("Saketh Equity Research", styles['Title'])
-    if logo_image:
-        logo_image.drawWidth = 0.6*inch
-        logo_image.drawHeight = 0.6*inch
-        header_table = Table([[logo_image, title]], colWidths=[0.7*inch, 6.3*inch], style=[('VALIGN', (0,0), (-1,-1), 'MIDDLE')])
-        story.append(header_table)
-    else:
-        story.append(title)
+    def add_main_content(self, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation):
+        navy_blue_header_style = TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#000080')), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('BOTTOMPADDING', (0,0), (-1,0), 12), ('GRID', (0,0), (-1,-1), 1, colors.black)])
 
-    story.append(Paragraph(f"Professional Report for: {fundamentals.get('Company Name', '')}", styles['h1']))
-    story.append(Paragraph(f"Generated on: {datetime.now().strftime('%A, %B %d, %Y')}", styles['h2']))
-    story.append(Spacer(1, 12))
+        rec_color = {'BUY': colors.green, 'HOLD': colors.orange, 'SELL': colors.red}.get(recommendation, colors.black)
+        rec_style = ParagraphStyle(name='Recommendation', parent=self.styles['h1'], alignment=TA_RIGHT, textColor=rec_color)
+        header_data = [[Paragraph(f"<b>Current Price:</b> {self.fundamentals.get('Current Price', 'N/A')}<br/><b>Market Cap:</b> {self.fundamentals.get('Market Cap', 'N/A')}", self.styles['Normal']), Paragraph(recommendation, rec_style)]]
+        self.story.append(Table(header_data, colWidths=[4*inch, 2.5*inch], style=[('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        self.story.append(Spacer(1, 12))
 
-    rec_color = {'BUY': colors.green, 'HOLD': colors.orange, 'SELL': colors.red}.get(recommendation, colors.black)
-    rec_style = ParagraphStyle(name='Recommendation', parent=styles['h1'], alignment=TA_RIGHT, textColor=rec_color)
-    header_data = [[Paragraph(f"<b>Current Price:</b> {fundamentals.get('Current Price', 'N/A')}<br/><b>Market Cap:</b> {fundamentals.get('Market Cap', 'N/A')}", styles['Normal']), Paragraph(recommendation, rec_style)]]
-    story.append(Table(header_data, colWidths=[4*inch, 2.5*inch], style=[('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-    story.append(Spacer(1, 24))
+        self.story.append(Paragraph("Company Overview", self.styles['h3']))
+        self.story.append(Paragraph(self.fundamentals.get('Description', 'N/A'), self.styles['Justify']))
+        self.story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Company Overview", styles['h3']))
-    story.append(Paragraph(fundamentals.get('Description', 'N/A'), styles['Justify']))
-    story.append(Spacer(1, 12))
+        self.story.append(Paragraph("Key Managerial Personnel", self.styles['h3']))
+        officers = self.fundamentals.get('companyOfficers', [])
+        if officers:
+            for officer in officers:
+                if 'name' in officer and 'title' in officer: self.story.append(Paragraph(f"• <b>{officer['name']}</b>, <i>{officer['title']}</i>", self.styles['Normal']))
+        else:
+            self.story.append(Paragraph("Data not available.", self.styles['Normal']))
+        self.story.append(PageBreak())
 
-    # --- NEW: Key Managerial Personnel Section ---
-    story.append(Paragraph("Key Managerial Personnel", styles['h3']))
-    officers = fundamentals.get('companyOfficers', [])
-    if officers:
-        for officer in officers:
-            if 'name' in officer and 'title' in officer:
-                story.append(Paragraph(f"• <b>{officer['name']}</b>, <i>{officer['title']}</i>", styles['Normal']))
-    else:
-        story.append(Paragraph("Data not available.", styles['Normal']))
-    story.append(Spacer(1, 24))
+        self.story.append(Paragraph("Analysis Summary", self.styles['h3']))
+        analysis_data = [
+            [Paragraph("<b>Technical Summary</b>", self.styles['Normal']), Paragraph("<b>Fundamental Summary</b>", self.styles['Normal'])],
+            [Paragraph("<br/>".join([f"• {item}" for item in tech_analysis]), self.styles['Normal']), Paragraph("<br/>".join([f"• {item}" for item in fund_analysis]), self.styles['Normal'])]
+        ]
+        self.story.append(Table(analysis_data, colWidths=[3.25*inch, 3.25*inch], style=[('GRID', (0,0), (-1,-1), 1, colors.black), ('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 6), ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#000080')), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke)]))
+        self.story.append(Spacer(1, 12))
 
-    # --- BLUE THEMED TABLES ---
-    navy_blue_header_style = TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#000080')), # Navy Blue Header
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 10),
-        ('BOTTOMPADDING', (0,0), (-1,0), 12),
-        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor("#f0f0f0")),
-        ('GRID', (0,0), (-1,-1), 1, colors.black)
-    ])
+        self.story.append(Paragraph("Technical Charts (3-Year)", self.styles['h3']))
+        try:
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 9), gridspec_kw={'height_ratios': [3, 1, 1]})
+            ax1.plot(price_df.index, price_df['Close'], label='Close Price', color='blue', linewidth=1.5)
+            ax1.plot(price_df.index, price_df['sma_50'], label='50-Day SMA', color='orange', linestyle='--'); ax1.plot(price_df.index, price_df['sma_200'], label='200-Day SMA', color='red', linestyle='--')
+            ax1.fill_between(price_df.index, price_df['bb_upper'], price_df['bb_lower'], color='gray', alpha=0.1)
+            ax1.set_ylabel('Price (₹)'); ax1.legend(); ax1.grid(True, linestyle='--', alpha=0.6)
+            ax2.plot(price_df.index, price_df['macd_line'], label='MACD', color='green'); ax2.plot(price_df.index, price_df['macd_signal'], label='Signal', color='red', linestyle='--')
+            ax2.bar(price_df.index, price_df['macd_hist'], label='Histogram', color='gray', alpha=0.5)
+            ax2.set_ylabel('MACD'); ax2.legend(); ax2.grid(True, linestyle='--', alpha=0.6)
+            ax3.plot(price_df.index, price_df['rsi'], label='RSI', color='purple')
+            ax3.axhline(70, linestyle='--', color='red'); ax3.axhline(30, linestyle='--', color='green')
+            ax3.set_ylabel('RSI'); ax3.legend(); ax3.grid(True, linestyle='--', alpha=0.6)
+            for ax in [ax1, ax2, ax3]:
+                ax.tick_params(axis='x', labelsize=8, rotation=30, ha='right'); ax.tick_params(axis='y', labelsize=8)
+            plt.tight_layout()
+            img_buffer = BytesIO(); fig.savefig(img_buffer, format='png', dpi=300); plt.close(fig)
+            self.story.append(Image(img_buffer, width=7*inch, height=7.5*inch))
+        except Exception as e:
+            self.story.append(Paragraph(f"Could not generate charts: {e}", self.styles['Normal']))
+        self.story.append(PageBreak())
 
-    analysis_data = [
-        [Paragraph("<b>Technical Analysis Summary</b>", styles['Normal']), Paragraph("<b>Fundamental Analysis Summary</b>", styles['Normal'])],
-        [Paragraph("<br/>".join([f"• {item}" for item in tech_analysis]), styles['Normal']), Paragraph("<br/>".join([f"• {item}" for item in fund_analysis]), styles['Normal'])]
-    ]
-    story.append(Table(analysis_data, colWidths=[3.25*inch, 3.25*inch], style=[('GRID', (0,0), (-1,-1), 1, colors.black), ('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 6), ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#000080')), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke)]))
-    story.append(PageBreak())
+        self.story.append(Paragraph("Key Metrics & Financial Ratios", self.styles['h3']))
+        ratios_data = [['Metric', 'Value'], ['Trailing P/E', f"{self.fundamentals.get('Trailing PE'):.2f}" if self.fundamentals.get('Trailing PE') else 'N/A'], ['Price/Book (P/B)', f"{self.fundamentals.get('Price/Book'):.2f}" if self.fundamentals.get('Price/Book') else 'N/A'], ['Return on Equity (ROE)', f"{self.fundamentals.get('ROE')*100:.2f}%" if self.fundamentals.get('ROE') else 'N/A'], ['Profit Margin', f"{self.fundamentals.get('Profit Margin')*100:.2f}%" if self.fundamentals.get('Profit Margin') else 'N/A'], ['Debt to Equity', f"{self.fundamentals.get('Debt to Equity'):.2f}" if self.fundamentals.get('Debt to Equity') is not None else 'N/A'], ['Dividend Yield', f"{self.fundamentals.get('Dividend Yield')*100:.2f}%" if self.fundamentals.get('Dividend Yield') else 'N/A']]
+        self.story.append(Table(ratios_data, style=navy_blue_header_style, colWidths=[3.25*inch, 3.25*inch]))
+        self.story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Technical Charts (3-Year)", styles['h3']))
-    # Charting code remains the same as the last version...
-    story.append(Spacer(1, 12))
+        self.story.append(Paragraph("Peer Comparison", self.styles['h3']))
+        if not peer_df.empty:
+            peer_data = [['Company', 'P/E Ratio', 'Return on Equity (ROE)']]
+            for index, row in peer_df.iterrows(): peer_data.append([row['name'], f"{row['pe']:.2f}" if pd.notna(row['pe']) else 'N/A', f"{row['roe']*100:.2f}%" if pd.notna(row['roe']) else 'N/A'])
+            self.story.append(Table(peer_data, style=navy_blue_header_style))
+        else:
+            self.story.append(Paragraph("No peer data available.", self.styles['Normal']))
+        self.story.append(PageBreak())
 
-    story.append(Paragraph("Key Financial Ratios", styles['h3']))
-    ratios_data = [['Metric', 'Value'],
-        ['Trailing P/E', f"{fundamentals.get('Trailing PE'):.2f}" if fundamentals.get('Trailing PE') else 'N/A'],
-        ['Price/Book (P/B)', f"{fundamentals.get('Price/Book'):.2f}" if fundamentals.get('Price/Book') else 'N/A'],
-        ['Return on Equity (ROE)', f"{fundamentals.get('ROE')*100:.2f}%" if fundamentals.get('ROE') else 'N/A'],
-        ['Profit Margin', f"{fundamentals.get('Profit Margin')*100:.2f}%" if fundamentals.get('Profit Margin') else 'N/A'],
-        ['Debt to Equity', f"{fundamentals.get('Debt to Equity'):.2f}" if fundamentals.get('Debt to Equity') else 'N/A'],
-    ]
-    story.append(Table(ratios_data, style=navy_blue_header_style, colWidths=[3.25*inch, 3.25*inch]))
-    story.append(Spacer(1, 12))
+        self.story.append(Paragraph("Recent News", self.styles['h3']))
+        for n in news: self.story.append(Paragraph(f"• <b>{n['title']}</b> <i>({n['publisher']})</i>", self.styles['Normal']))
+        self.story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Peer Comparison", styles['h3']))
-    if not peer_df.empty:
-        peer_data = [['Company', 'P/E Ratio', 'Return on Equity (ROE)']]
-        for index, row in peer_df.iterrows():
-            peer_data.append([row['name'], f"{row['pe']:.2f}" if pd.notna(row['pe']) else 'N/A', f"{row['roe']*100:.2f}%" if pd.notna(row['roe']) else 'N/A'])
-        story.append(Table(peer_data, style=navy_blue_header_style))
-    else:
-        story.append(Paragraph("No peer data available.", styles['Normal']))
-    story.append(Spacer(1, 12))
+    def add_disclaimer(self):
+        self.story.append(Paragraph("Disclaimer", self.styles['h3']))
+        disclaimer_text = "This report is for informational purposes only and does not constitute a recommendation to buy or sell any security. The information contained herein has been obtained from sources believed to be reliable, but its accuracy and completeness are not guaranteed. Saketh Equity Research is not a registered investment advisor. All investment decisions should be made with the help of a qualified financial professional. Past performance is not indicative of future results."
+        self.story.append(Paragraph(disclaimer_text, self.styles['Justify']))
 
-    story.append(Paragraph("Recent News", styles['h3']))
-    for n in news:
-        story.append(Paragraph(f"• <b>{n['title']}</b> <i>({n['publisher']})</i>", styles['Normal']))
-
-    # Build the document with the border function
-    doc.build(story, onFirstPage=draw_border, onLaterPages=draw_border)
-    return filename
+    def generate(self):
+        self.doc.build(self.story, onFirstPage=self.draw_border, onLaterPages=self.draw_border)
 
 # ======================================================================
 # FLASK WEB ROUTES
@@ -336,6 +290,7 @@ def create_report(stock_ticker):
     symbol = stock_ticker
     fundamentals = fetch_company_info(symbol)
     if not fundamentals: raise ValueError(f"Could not get data for {symbol}.")
+
     price_df = fetch_price(symbol)
     if price_df is None: raise ValueError(f"Could not get price history for {symbol}.")
 
@@ -348,16 +303,22 @@ def create_report(stock_ticker):
     peer_df = get_peer_comparison(peers)
     news = fetch_news_yfinance(symbol)
 
-    pdf_filename = generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation)
-    return pdf_filename
+    filename = f"{symbol.replace('.', '_')}_Pro_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    filepath = os.path.join(OUTPUT_FOLDER, filename)
+
+    pdf = ReportPDF(filepath, fundamentals)
+    pdf.add_title_page()
+    pdf.add_main_content(price_df, news, peer_df, tech_analysis, fund_analysis, recommendation)
+    pdf.add_disclaimer()
+    pdf.generate()
+
+    return filename
 
 @app.route('/')
-def index():
-    return render_template('index.html')
+def index(): return render_template('index.html')
 
 @app.route('/api/stocks')
-def get_stocks():
-    return jsonify(SECTOR_STOCK_MAPPING)
+def get_stocks(): return jsonify(SECTOR_STOCK_MAPPING)
 
 @app.route('/generate', methods=['POST'])
 def generate():
