@@ -46,15 +46,20 @@ PEER_MAPPING = {
 }
 
 # ======================================================================
-# DATA FETCHING AND ANALYSIS FUNCTIONS (DEFINITIVE VERSION)
+# DATA FETCHING AND ANALYSIS FUNCTIONS (DEFINITIVE BUG FIX)
 # ======================================================================
+
+# --- BUG FIX: Added this helper function to prevent the 'Series' error ---
+def get_scalar(value):
+    """Helper function to ensure a value is a single number, not a pandas Series."""
+    if isinstance(value, pd.Series):
+        return value.iloc[0] if not value.empty else None
+    return value
 
 def fetch_company_info(symbol):
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
-
-        # Comprehensive data fetching
         data = {
             'info': info,
             'logo_image': fetch_logo(info),
@@ -63,8 +68,7 @@ def fetch_company_info(symbol):
             'quarterly_financials': ticker.quarterly_financials,
             'Symbol': symbol, 'Company Name': info.get('longName', 'N/A'),
             'Description': info.get('longBusinessSummary', 'N/A'),
-            'Market Cap': f"₹{info.get('marketCap', 0) / 1e7:,.2f} Cr",
-            'Current Price': f"₹{info.get('currentPrice', 'N/A')}",
+            'Market Cap': f"₹{info.get('marketCap', 0) / 1e7:,.2f} Cr", 'Current Price': f"₹{info.get('currentPrice', 'N/A')}",
             'Trailing PE': info.get('trailingPE'), 'ROE': info.get('returnOnEquity'),
             'Debt to Equity': info.get('debtToEquity'), 'companyOfficers': info.get('companyOfficers', [])
         }
@@ -118,7 +122,6 @@ def fetch_news_yfinance(symbol, limit=5):
     return news
 
 def get_peer_comparison(peers):
-    # Same as before, already robust
     peer_details = []
     for peer_symbol in peers:
         try:
@@ -128,32 +131,59 @@ def get_peer_comparison(peers):
             continue
     return pd.DataFrame(peer_details)
 
+def interpret_technical(df):
+    analysis = []
+    if df is None or df.empty: return ["Technical data not available."]
+    latest = df.iloc[-И]
+
+    # --- BUG FIX: Using get_scalar to ensure all values are single numbers before comparison ---
+    sma_50 = get_scalar(latest.get('sma_50'))
+    sma_200 = get_scalar(latest.get('sma_200'))
+    close_price = get_scalar(latest.get('Close'))
+    bb_upper = get_scalar(latest.get('bb_upper'))
+    bb_lower = get_scalar(latest.get('bb_lower'))
+    macd_line = get_scalar(latest.get('macd_line'))
+    macd_signal = get_scalar(latest.get('macd_signal'))
+    rsi = get_scalar(latest.get('rsi'))
+
+    if sma_50 is not None and sma_200 is not None:
+        analysis.append("<b>Trend (SMA):</b> " + ("Bullish (Golden Cross)" if sma_50 > sma_200 else "Bearish (Death Cross)"))
+    if bb_upper is not None and close_price is not None:
+        analysis.append("<b>Volatility (Bollinger):</b> " + ("High (Price above upper band)" if close_price > bb_upper else "Normal"))
+    if macd_line is not None and macd_signal is not None:
+        analysis.append("<b>Momentum (MACD):</b> " + ("Positive (MACD above signal)" if macd_line > macd_signal else "Negative (MACD below signal)"))
+    if rsi is not None:
+        analysis.append(f"<b>Strength (RSI):</b> {('Overbought' if rsi > 70 else 'Oversold' if rsi < 30 else 'Neutral')} at {rsi:.2f}")
+
+    return analysis
+
 def generate_key_highlights(fundamentals, tech_analysis):
     highlights = []
     rec = generate_recommendation(fundamentals, tech_analysis)
     highlights.append(f"<b>Overall Recommendation:</b> Based on a composite analysis, the current recommendation is to <b>{rec}</b>.")
 
-    if fundamentals.get('Trailing PE'):
-        pe = fundamentals['Trailing PE']
+    pe = fundamentals.get('Trailing PE')
+    if pe is not None:
         highlights.append(f"<b>Valuation:</b> The stock's P/E ratio of {pe:.2f} suggests a {'fair' if 15 <= pe <= 30 else 'potentially high' if pe > 30 else 'potentially low'} valuation.")
 
     if any("Bullish" in s for s in tech_analysis):
-        highlights.append("<b>Technical Trend:</b> The stock is showing bullish long-term trend signals based on its moving averages.")
+        highlights.append("<b>Technical Trend:</b> The stock is showing bullish long-term trend signals.")
     elif any("Bearish" in s for s in tech_analysis):
-        highlights.append("<b>Technical Trend:</b> The stock is showing bearish long-term trend signals based on its moving averages.")
+        highlights.append("<b>Technical Trend:</b> The stock is showing bearish long-term trend signals.")
 
-    if fundamentals.get('ROE'):
-        roe = fundamentals['ROE']
+    roe = fundamentals.get('ROE')
+    if roe is not None:
         highlights.append(f"<b>Company Performance:</b> With a Return on Equity of {roe*100:.2f}%, the company shows {'strong' if roe > 0.15 else 'moderate'} profitability.")
 
     return highlights
 
 def generate_recommendation(fundamentals, tech_analysis):
-    # This logic remains the same
     score = 0
-    if fundamentals.get('ROE') and fundamentals['ROE'] > 0.15: score += 1
-    if fundamentals.get('Trailing PE') and fundamentals['Trailing PE'] < 30: score += 1
+    roe = fundamentals.get('ROE')
+    pe = fundamentals.get('Trailing PE')
     de = fundamentals.get('Debt to Equity')
+    if roe is not None and roe > 0.15: score += 1
+    if pe is not None and pe < 30: score += 1
     if de is not None and de < 150: score += 1
     if any("Bullish" in s for s in tech_analysis): score += 1
     if any("Overbought" in s for s in tech_analysis): score -= 1
@@ -161,32 +191,6 @@ def generate_recommendation(fundamentals, tech_analysis):
     if score >= 1: return "HOLD"
     return "SELL"
 
-def interpret_technical(df):
-    # This logic remains the same
-    analysis = []
-    if df is None or df.empty: return ["Technical data not available."]
-    latest = df.iloc[-1]
-
-    sma_50 = latest.get('sma_50')
-    sma_200 = latest.get('sma_200')
-    close_price = latest.get('Close')
-    bb_upper = latest.get('bb_upper')
-    macd_line = latest.get('macd_line')
-    macd_signal = latest.get('macd_signal')
-    rsi = latest.get('rsi')
-
-    if pd.notna(sma_50) and pd.notna(sma_200):
-        analysis.append("<b>Trend (SMA):</b> " + ("Bullish (Golden Cross)" if sma_50 > sma_200 else "Bearish (Death Cross)"))
-    if pd.notna(bb_upper) and pd.notna(close_price):
-        analysis.append("<b>Volatility (Bollinger):</b> " + ("High (Price above upper band)" if close_price > bb_upper else "Normal"))
-    if pd.notna(macd_line) and pd.notna(macd_signal):
-        analysis.append("<b>Momentum (MACD):</b> " + ("Positive (MACD above signal)" if macd_line > macd_signal else "Negative (MACD below signal)"))
-    if pd.notna(rsi):
-        analysis.append(f"<b>Strength (RSI):</b> {('Overbought' if rsi > 70 else 'Oversold' if rsi < 30 else 'Neutral')} at {rsi:.2f}")
-
-    return analysis
-
-# --- PDF Generation Engine ---
 class ReportPDF:
     def __init__(self, filepath, fundamentals):
         self.doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=inch*0.5, leftMargin=inch*0.5, topMargin=inch*0.5, bottomMargin=inch*0.5)
@@ -202,13 +206,14 @@ class ReportPDF:
 
     def draw_border(self, canvas, doc):
         canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor('#000080')) # Navy Blue
+        canvas.setStrokeColor(colors.HexColor('#000080'))
         canvas.setLineWidth(2)
         canvas.rect(doc.leftMargin, doc.bottomMargin, doc.width, doc.height)
         canvas.restoreState()
 
     def create_pdf(self, price_df, news, peer_df, tech_analysis, recommendation, key_highlights):
         # Page 1: Title Page
+        # (This part remains the same)
         self.story.append(Spacer(1, 2*inch))
         logo_image = self.fundamentals.get('logo_image')
         if logo_image:
@@ -238,21 +243,21 @@ class ReportPDF:
         self.story.append(Paragraph(self.fundamentals.get('Description', 'N/A') or "No company overview available.", self.styles['Justify']))
         self.story.append(Spacer(1, 12))
 
+        # ... (rest of the PDF generation logic from the previous definitive version)
         self.story.append(Paragraph("Key Managerial Personnel", self.styles['h3']))
         officers = self.fundamentals.get('companyOfficers', [])
         if officers:
-            for officer in officers[:5]: # Limit to top 5
+            for officer in officers[:5]:
                 if 'name' in officer and 'title' in officer: self.story.append(Paragraph(f"• <b>{officer['name']}</b>, <i>{officer['title']}</i>", self.styles['Normal']))
         else:
             self.story.append(Paragraph("Managerial data not available.", self.styles['Normal']))
         self.story.append(PageBreak())
 
-        # Page 3: Financials
         self.story.append(Paragraph("Financial Summary (Annual)", self.styles['h3']))
         financials = self.fundamentals.get('financials')
         balance_sheet = self.fundamentals.get('balance_sheet')
         if financials is not None and not financials.empty and balance_sheet is not None and not balance_sheet.empty:
-            fin_data = [['Metric', financials.columns[2].strftime('%Y'), financials.columns[1].strftime('%Y'), financials.columns[0].strftime('%Y')]]
+            fin_data = [['Metric', financials.columns[0].strftime('%Y'), financials.columns[1].strftime('%Y'), financials.columns[2].strftime('%Y')]]
             fin_items = ['Total Revenue', 'Net Income', 'Total Assets', 'Total Liabilities Net Minority Interest']
             all_fins = pd.concat([financials, balance_sheet])
             for item in fin_items:
@@ -278,7 +283,6 @@ class ReportPDF:
             self.story.append(Paragraph("Quarterly performance data not available.", self.styles['Normal']))
         self.story.append(PageBreak())
 
-        # Page 4: Technicals and Peers
         self.story.append(Paragraph("Technical Charts & Analysis", self.styles['h3']))
         tech_summary = Paragraph("<br/>".join([f"• {item}" for item in tech_analysis]), self.styles['Normal'])
         try:
@@ -310,7 +314,6 @@ class ReportPDF:
             self.story.append(Paragraph("Peer comparison data not available for this stock.", self.styles['Normal']))
         self.story.append(PageBreak())
 
-        # Page 5: News and Disclaimer
         self.story.append(Paragraph("Recent News", self.styles['h3']))
         if news:
             for n in news: self.story.append(Paragraph(f"• <b>{n['title']}</b> <i>({n['publisher']})</i>", self.styles['Normal']))
@@ -324,10 +327,6 @@ class ReportPDF:
 
     def generate(self):
         self.doc.build(self.story, onFirstPage=self.draw_border, onLaterPages=self.draw_border)
-
-# ======================================================================
-# MAIN WORKFLOW AND FLASK ROUTES
-# ======================================================================
 
 def create_report(stock_ticker):
     symbol = stock_ticker
