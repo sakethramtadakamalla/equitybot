@@ -12,7 +12,7 @@ import requests
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # Add this line
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -36,9 +36,8 @@ OUTPUT_FOLDER = 'outputs'
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ------------------------
-# DATA FOR THE FRONT-END
+# DATA FOR THE FRONT-END & PEER ANALYSIS
 # ------------------------
-# This dictionary powers the dropdown menus on your website.
 SECTOR_STOCK_MAPPING = {
     "Banking & Financials": [
         {"name": "HDFC Bank", "ticker": "HDFCBANK.NS"},
@@ -72,140 +71,244 @@ SECTOR_STOCK_MAPPING = {
     ],
 }
 
+PEER_MAPPING = {
+    "HDFCBANK.NS": ["ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"],
+    "ICICIBANK.NS": ["HDFCBANK.NS", "AXISBANK.NS", "KOTAKBANK.NS", "SBIN.NS"],
+    "INFY.NS": ["TCS.NS", "WIPRO.NS", "TECHM.NS", "HCLTECH.NS"],
+    "TCS.NS": ["INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS"],
+    "RELIANCE.NS": ["ONGC.NS", "TATAPOWER.NS", "ADANIPOWER.NS"],
+    "TATAMOTORS.NS": ["MARUTI.NS", "M&M.NS", "EICHERMOT.NS"],
+}
+
+
 # ======================================================================
-# ALL OF YOUR ORIGINAL CODE GOES HERE, INSIDE FUNCTIONS
-# I have taken your script and organized it into the functions below.
+# DATA FETCHING AND ANALYSIS FUNCTIONS (UPGRADED)
 # ======================================================================
 
 def fetch_price(symbol, period="3y"):
-    """Fetches historical price data."""
-    print(f"Fetching {period} price data for {symbol}...")
     df = yf.download(symbol, period=period, interval="1d", progress=False, auto_adjust=True)
-    if df.empty:
-        print(f"Warning: Could not fetch price data for {symbol}.")
-        return None
-    df['close'] = df['Close']
-    return df
+    return df if not df.empty else None
 
 def compute_technical_indicators(df):
-    """Computes all technical indicators for the given dataframe."""
     if df is None: return None
-    window = 20
-    df['bb_mid'] = df['close'].rolling(window).mean()
-    df['bb_std'] = df['close'].rolling(window).std()
+    # SMAs
+    df['sma_50'] = df['Close'].rolling(window=50).mean()
+    df['sma_200'] = df['Close'].rolling(window=200).mean()
+    # Bollinger Bands
+    df['bb_mid'] = df['Close'].rolling(window=20).mean()
+    df['bb_std'] = df['Close'].rolling(window=20).std()
     df['bb_upper'] = df['bb_mid'] + 2 * df['bb_std']
     df['bb_lower'] = df['bb_mid'] - 2 * df['bb_std']
-    fast, slow, signal = 12, 26, 9
-    df['ema_fast'] = df['close'].ewm(span=fast, adjust=False).mean()
-    df['ema_slow'] = df['close'].ewm(span=slow, adjust=False).mean()
-    df['macd_line'] = df['ema_fast'] - df['ema_slow']
-    df['macd_signal'] = df['macd_line'].ewm(span=signal, adjust=False).mean()
+    # MACD
+    df['ema_12'] = df['Close'].ewm(span=12, adjust=False).mean()
+    df['ema_26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    df['macd_line'] = df['ema_12'] - df['ema_26']
+    df['macd_signal'] = df['macd_line'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = df['macd_line'] - df['macd_signal']
-    delta = df['close'].diff()
+    # RSI
+    delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss.replace(0, 1e-9)
     df['rsi'] = 100 - (100 / (1 + rs))
-    df['sma_50'] = df['close'].rolling(window=50).mean()
-    df['sma_200'] = df['close'].rolling(window=200).mean()
     return df
 
 def fetch_company_info(symbol):
-    """Fetches comprehensive company information."""
-    print(f"Fetching fundamental data for {symbol}...")
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
-        currency_symbol = '₹'
         unit_divisor = 1e7
-        unit_label = ' Cr'
-        data = {
+        return {
             'Symbol': symbol, 'Company Name': info.get('longName', 'N/A'),
-            'Sector': info.get('sector', 'N/A'), 'Industry': info.get('industry', 'N/A'),
-            'Description': info.get('longBusinessSummary', 'No description available.'),
-            'Market Cap': f"{currency_symbol}{info.get('marketCap', 0) / unit_divisor:,.2f}{unit_label}",
-            'Current Price': f"{currency_symbol}{info.get('currentPrice', 'N/A')}",
-            '52 Week Range': f"{info.get('fiftyTwoWeekLow', 'N/A')} - {info.get('fiftyTwoWeekHigh', 'N/A')}",
-            'Trailing PE': info.get('trailingPE'),
+            'Description': info.get('longBusinessSummary', 'N/A'),
+            'Market Cap': f"₹{info.get('marketCap', 0) / unit_divisor:,.2f} Cr",
+            'Current Price': f"₹{info.get('currentPrice', 'N/A')}",
+            'Trailing PE': info.get('trailingPE'), 'Forward PE': info.get('forwardPE'),
+            'Price/Book': info.get('priceToBook'),
             'ROE': info.get('returnOnEquity'),
+            'Profit Margin': info.get('profitMargins'),
+            'Debt to Equity': info.get('debtToEquity'),
+            'Current Ratio': info.get('currentRatio'),
         }
-        return data
     except Exception as e:
         print(f"Error fetching fundamental data for {symbol}: {e}")
         return None
 
-def fetch_news_google(company_name, limit=5):
-    """Fetches news from Google."""
-    print(f"Fetching latest news for {company_name}...")
+def fetch_news_yfinance(symbol, limit=8):
     news = []
     try:
-        query = f"\"{company_name}\" stock news"
-        url = f"https://www.google.com/search?q={requests.utils.quote(query)}&tbm=nws&num={limit+5}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "lxml")
-        articles = soup.find_all("div", class_="SoaBEf")
-        for article in articles:
-            if len(news) >= limit: break
-            title_elem = article.find("div", role="heading")
-            link_elem = article.find("a")
-            source_elem = article.find("div", class_="NUnG9d")
-            if all([title_elem, link_elem, source_elem]):
-                news.append({'title': title_elem.text.strip(), 'publisher': source_elem.text.strip()})
+        ticker = yf.Ticker(symbol)
+        news_data = ticker.news
+        for item in news_data[:limit]:
+            news.append({'title': item.get('title', 'N/A'), 'publisher': item.get('publisher', 'N/A')})
     except Exception as e:
-        print(f"Error fetching news from Google: {e}")
+        print(f"Error fetching news from yfinance: {e}")
     return news
 
-def generate_pdf_report(fundamentals, price_df, news):
-    """Builds and saves the final PDF report."""
+def get_peer_comparison(peers):
+    peer_details = []
+    for peer_symbol in peers:
+        try:
+            info = yf.Ticker(peer_symbol).info
+            peer_details.append({
+                'name': info.get('shortName', peer_symbol),
+                'pe': info.get('trailingPE'),
+                'roe': info.get('returnOnEquity')
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(peer_details)
+
+def interpret_technical(df):
+    analysis = []
+    latest = df.iloc[-1]
+    # Trend Analysis (SMAs)
+    if pd.notna(latest['sma_50']) and pd.notna(latest['sma_200']):
+        if latest['sma_50'] > latest['sma_200']:
+            analysis.append("<b>Trend:</b> Bullish Signal (Golden Cross). The short-term 50-day average is above the long-term 200-day average, indicating positive upward momentum.")
+        else:
+            analysis.append("<b>Trend:</b> Bearish Signal (Death Cross). The 50-day average has crossed below the 200-day average, a negative long-term signal.")
+    # Volatility Analysis (Bollinger Bands)
+    if pd.notna(latest['bb_upper']) and latest['Close'] > latest['bb_upper']:
+        analysis.append("<b>Volatility:</b> High. The price is trading above the upper Bollinger Band, which can signal an overbought condition.")
+    elif pd.notna(latest['bb_lower']) and latest['Close'] < latest['bb_lower']:
+        analysis.append("<b>Volatility:</b> High. The price is below the lower Bollinger Band, suggesting a potential oversold condition.")
+    # Momentum Analysis (MACD)
+    if pd.notna(latest['macd_line']) and pd.notna(latest['macd_signal']):
+        if latest['macd_line'] > latest['macd_signal']:
+            analysis.append("<b>Momentum (MACD):</b> Positive. The MACD line is above its signal line, indicating bullish momentum in the short term.")
+        else:
+            analysis.append("<b>Momentum (MACD):</b> Negative. The MACD line is below its signal line, indicating bearish momentum.")
+    # Strength Analysis (RSI)
+    if pd.notna(latest['rsi']):
+        if latest['rsi'] > 70:
+            analysis.append(f"<b>Strength (RSI):</b> Overbought. The RSI is high at {latest['rsi']:.2f}, suggesting the asset may be overvalued and could be due for a pullback.")
+        elif latest['rsi'] < 30:
+            analysis.append(f"<b>Strength (RSI):</b> Oversold. The RSI is low at {latest['rsi']:.2f}, suggesting the asset may be undervalued and poised for a rebound.")
+        else:
+            analysis.append(f"<b>Strength (RSI):</b> Neutral. The RSI is balanced at {latest['rsi']:.2f}, indicating no immediate overbought or oversold pressure.")
+    return analysis
+
+def interpret_fundamental(fundamentals):
+    analysis = []
+    if fundamentals.get('Trailing PE'):
+        pe = fundamentals['Trailing PE']
+        valuation = "potentially overvalued (high P/E)" if pe > 30 else "potentially undervalued (low P/E)" if pe < 15 else "fairly valued"
+        analysis.append(f"<b>Valuation:</b> With a P/E Ratio of {pe:.2f}, the stock appears {valuation} compared to traditional benchmarks.")
+    if fundamentals.get('ROE'):
+        roe = fundamentals['ROE']
+        quality = "strong" if roe > 0.15 else "moderate"
+        analysis.append(f"<b>Profitability:</b> A Return on Equity of {roe*100:.2f}% indicates {quality} efficiency in generating profit from shareholder equity.")
+    if fundamentals.get('Debt to Equity'):
+        de = fundamentals['Debt to Equity']
+        risk = "high, suggesting increased risk" if de > 150 else "manageable"
+        analysis.append(f"<b>Financial Health:</b> The Debt to Equity ratio of {de:.2f} is {risk}.")
+    return analysis
+
+def generate_recommendation(fundamentals, tech_analysis):
+    score = 0
+    if fundamentals.get('ROE') and fundamentals['ROE'] > 0.15: score += 1
+    if fundamentals.get('Trailing PE') and fundamentals['Trailing PE'] < 30: score += 1
+    if fundamentals.get('Debt to Equity') and fundamentals['Debt to Equity'] < 150: score += 1
+    if any("Bullish" in s for s in tech_analysis): score += 1
+    if any("Overbought" in s for s in tech_analysis): score -= 1
+    if score >= 3: return "BUY"
+    if score >= 1: return "HOLD"
+    return "SELL"
+
+def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation):
     stock_name = fundamentals.get('Symbol', 'STOCK')
-    filename = f"{stock_name.replace('.', '_')}_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    filename = f"{stock_name.replace('.', '_')}_Full_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
     filepath = os.path.join(OUTPUT_FOLDER, filename)
     doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=inch*0.5, leftMargin=inch*0.5, topMargin=inch*0.5, bottomMargin=inch*0.5)
     story = []
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY, leading=14))
 
-    # --- PDF Content ---
-    story.append(Paragraph(f"Equity Research Report: {fundamentals.get('Company Name', '')}", styles['h1']))
+    story.append(Paragraph(f"Saketh Equity Research Report: {fundamentals.get('Company Name', '')}", styles['h1']))
     story.append(Paragraph(f"Date: {datetime.now().strftime('%d %B %Y')}", styles['h2']))
     story.append(Spacer(1, 12))
 
-    header_data = [
-        [f"Symbol:", fundamentals.get('Symbol', 'N/A')],
-        [f"Current Price:", fundamentals.get('Current Price', 'N/A')],
-        [f"Market Cap:", fundamentals.get('Market Cap', 'N/A')],
-        [f"P/E Ratio:", f"{fundamentals.get('Trailing PE'):.2f}" if fundamentals.get('Trailing PE') else 'N/A'],
-        [f"Return on Equity:", f"{fundamentals.get('ROE')*100:.2f}%" if fundamentals.get('ROE') else 'N/A']
-    ]
-    header_table = Table(header_data, colWidths=[1.5*inch, 4.5*inch])
-    header_table.setStyle(TableStyle([('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold')]))
-    story.append(header_table)
+    rec_color = {'BUY': green, 'HOLD': orange, 'SELL': red}.get(recommendation, black)
+    header_data = [[Paragraph(f"<b>Current Price:</b> {fundamentals.get('Current Price', 'N/A')}<br/><b>Market Cap:</b> {fundamentals.get('Market Cap', 'N/A')}", styles['Normal']), Paragraph(f"<font size=24 color='{rec_color.hexval()}'>{recommendation}</font>", styles['h1'])]]
+    story.append(Table(header_data, colWidths=[4*inch, 2.5*inch], style=[('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('ALIGN', (1,0), (1,0), 'RIGHT')]))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Company Overview", styles['h3']))
     story.append(Paragraph(fundamentals.get('Description', 'N/A'), styles['Justify']))
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Price Chart & Technicals (3-Year)", styles['h3']))
+    analysis_data = [
+        [Paragraph("<b>Technical Analysis Summary</b>", styles['h4']), Paragraph("<b>Fundamental Analysis Summary</b>", styles['h4'])],
+        [Paragraph("<br/>".join([f"• {item}" for item in tech_analysis]), styles['Normal']), Paragraph("<br/>".join([f"• {item}" for item in fund_analysis]), styles['Normal'])]
+    ]
+    story.append(Table(analysis_data, colWidths=[3.5*inch, 3.5*inch], style=[('GRID', (0,0), (-1,-1), 1, black), ('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 6)]))
+    story.append(PageBreak())
+
+    story.append(Paragraph("Technical Charts (3-Year)", styles['h3']))
     try:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [3, 1]})
-        ax1.plot(price_df.index, price_df['close'], label='Close Price', color='blue')
-        ax1.plot(price_df.index, price_df['sma_50'], label='50-Day SMA', color='orange', linestyle='--')
-        ax1.plot(price_df.index, price_df['sma_200'], label='200-Day SMA', color='red', linestyle='--')
-        ax1.set_title(f"{stock_name} Price and Moving Averages"); ax1.grid(True); ax1.legend()
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 9), gridspec_kw={'height_ratios': [3, 1, 1]})
+        fig.suptitle(f'Technical Analysis for {stock_name}', fontsize=16)
 
-        ax2.plot(price_df.index, price_df['rsi'], label='RSI', color='purple')
-        ax2.axhline(70, linestyle='--', color='red'); ax2.axhline(30, linestyle='--', color='green')
-        ax2.set_title("Relative Strength Index (RSI)"); ax2.grid(True)
+        # Plot 1: Price, SMAs, Bollinger Bands
+        ax1.plot(price_df.index, price_df['Close'], label='Close Price', color='blue', linewidth=1.5)
+        ax1.plot(price_df.index, price_df['sma_50'], label='50-Day SMA', color='orange', linestyle='--', alpha=0.8)
+        ax1.plot(price_df.index, price_df['sma_200'], label='200-Day SMA', color='red', linestyle='--', alpha=0.8)
+        ax1.plot(price_df.index, price_df['bb_upper'], label='Bollinger Upper', color='gray', linestyle=':', alpha=0.6)
+        ax1.plot(price_df.index, price_df['bb_lower'], label='Bollinger Lower', color='gray', linestyle=':', alpha=0.6)
+        ax1.fill_between(price_df.index, price_df['bb_upper'], price_df['bb_lower'], color='gray', alpha=0.1)
+        ax1.set_ylabel('Price (₹)', fontsize=9)
+        ax1.legend()
+        ax1.grid(True, linestyle='--', alpha=0.6)
 
-        plt.tight_layout()
+        # Plot 2: MACD
+        ax2.plot(price_df.index, price_df['macd_line'], label='MACD Line', color='green')
+        ax2.plot(price_df.index, price_df['macd_signal'], label='Signal Line', color='red', linestyle='--')
+        ax2.bar(price_df.index, price_df['macd_hist'], label='Histogram', color='gray', alpha=0.5)
+        ax2.set_ylabel('MACD', fontsize=9)
+        ax2.legend()
+        ax2.grid(True, linestyle='--', alpha=0.6)
+
+        # Plot 3: RSI
+        ax3.plot(price_df.index, price_df['rsi'], label='RSI', color='purple')
+        ax3.axhline(70, linestyle='--', color='red', alpha=0.7); ax3.axhline(30, linestyle='--', color='green', alpha=0.7)
+        ax3.set_ylabel('RSI', fontsize=9)
+        ax3.legend()
+        ax3.grid(True, linestyle='--', alpha=0.6)
+
+        # Improve label visibility for all charts
+        for ax in [ax1, ax2, ax3]:
+            ax.tick_params(axis='x', labelsize=8, rotation=30, ha='right')
+            ax.tick_params(axis='y', labelsize=8)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         img_buffer = BytesIO()
         fig.savefig(img_buffer, format='png', dpi=300); plt.close(fig)
-        img_buffer.seek(0)
-        story.append(Image(img_buffer, width=7*inch, height=5.25*inch))
+        story.append(Image(img_buffer, width=7*inch, height=7.5*inch))
     except Exception as e:
-        story.append(Paragraph(f"Could not generate chart: {e}", styles['Normal']))
+        story.append(Paragraph(f"Could not generate charts: {e}", styles['Normal']))
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Key Financial Ratios", styles['h3']))
+    ratios_data = [
+        ['Trailing P/E', f"{fundamentals.get('Trailing PE'):.2f}" if fundamentals.get('Trailing PE') else 'N/A'],
+        ['Forward P/E', f"{fundamentals.get('Forward PE'):.2f}" if fundamentals.get('Forward PE') else 'N/A'],
+        ['Price/Book (P/B)', f"{fundamentals.get('Price/Book'):.2f}" if fundamentals.get('Price/Book') else 'N/A'],
+        ['Return on Equity (ROE)', f"{fundamentals.get('ROE')*100:.2f}%" if fundamentals.get('ROE') else 'N/A'],
+        ['Profit Margin', f"{fundamentals.get('Profit Margin')*100:.2f}%" if fundamentals.get('Profit Margin') else 'N/A'],
+        ['Debt to Equity', f"{fundamentals.get('Debt to Equity'):.2f}" if fundamentals.get('Debt to Equity') else 'N/A'],
+        ['Current Ratio', f"{fundamentals.get('Current Ratio'):.2f}" if fundamentals.get('Current Ratio') else 'N/A'],
+    ]
+    story.append(Table(ratios_data, style=[('GRID', (0,0), (-1,-1), 1, black), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold')]))
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Peer Comparison", styles['h3']))
+    if not peer_df.empty:
+        peer_data = [['Company', 'P/E Ratio', 'Return on Equity (ROE)']]
+        for index, row in peer_df.iterrows():
+            peer_data.append([row['name'], f"{row['pe']:.2f}" if pd.notna(row['pe']) else 'N/A', f"{row['roe']*100:.2f}%" if pd.notna(row['roe']) else 'N/A'])
+        story.append(Table(peer_data, style=[('GRID', (0,0), (-1,-1), 1, black), ('BACKGROUND', (0,0), (-1,0), lightgrey), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold')]))
+    else:
+        story.append(Paragraph("No peer data available.", styles['Normal']))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Recent News", styles['h3']))
@@ -215,61 +318,53 @@ def generate_pdf_report(fundamentals, price_df, news):
     doc.build(story)
     return filename
 
-def create_report(stock_ticker):
-    """This function runs the full analysis for one stock."""
-    symbol = stock_ticker
-
-    # 1. Fetch Data
-    fundamentals = fetch_company_info(symbol)
-    if not fundamentals:
-        raise ValueError(f"Could not get data for {symbol}. It might be an invalid ticker.")
-
-    price_df = fetch_price(symbol)
-    if price_df is None:
-        raise ValueError(f"Could not get price history for {symbol}.")
-
-    # 2. Compute Indicators & Fetch News
-    price_df_tech = compute_technical_indicators(price_df)
-    news = fetch_news_google(fundamentals.get('Company Name', symbol))
-
-    # 3. Generate PDF Report
-    pdf_filename = generate_pdf_report(fundamentals, price_df_tech, news)
-    return pdf_filename
-
 # ======================================================================
 # FLASK WEB ROUTES (The part that makes it a website)
 # ======================================================================
 
+def create_report(stock_ticker):
+    """This function runs the full analysis for one stock."""
+    symbol = stock_ticker
+    fundamentals = fetch_company_info(symbol)
+    if not fundamentals: raise ValueError(f"Could not get data for {symbol}.")
+    price_df = fetch_price(symbol)
+    if price_df is None: raise ValueError(f"Could not get price history for {symbol}.")
+
+    price_df_tech = compute_technical_indicators(price_df)
+    tech_analysis = interpret_technical(price_df_tech)
+    fund_analysis = interpret_fundamental(fundamentals)
+    recommendation = generate_recommendation(fundamentals, tech_analysis)
+
+    peers = PEER_MAPPING.get(symbol, [])
+    peer_df = get_peer_comparison(peers)
+    news = fetch_news_yfinance(symbol)
+
+    pdf_filename = generate_pdf_report(fundamentals, price_df_tech, news, peer_df, tech_analysis, fund_analysis, recommendation)
+    return pdf_filename
+
 @app.route('/')
 def index():
-    """Renders the main page."""
     return render_template('index.html')
 
 @app.route('/api/stocks')
 def get_stocks():
-    """API endpoint to provide stock data to the frontend."""
     return jsonify(SECTOR_STOCK_MAPPING)
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """Handles the report generation request from the website."""
     try:
         stock_ticker = request.form['stock_select']
-        if not stock_ticker:
-            return jsonify({'error': 'No stock selected.'}), 400
-
+        if not stock_ticker: return jsonify({'error': 'No stock selected.'}), 400
         pdf_filename = create_report(stock_ticker)
         return jsonify({'download_url': f"/download/{pdf_filename}"})
-
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        print(f"An unexpected error occurred: {e}") # For your own debugging
+        print(f"An unexpected error occurred: {e}")
         return jsonify({'error': 'An internal server error occurred. Please try again later.'}), 500
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Serves the generated PDF file for download."""
     return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
 
 if __name__ == "__main__":
