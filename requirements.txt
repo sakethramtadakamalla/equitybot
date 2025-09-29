@@ -8,4 +8,5 @@ numpy
 pandas
 reportlab
 requests
+scipy
 yfinance
