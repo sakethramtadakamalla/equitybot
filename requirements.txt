@@ -1,0 +1,11 @@
+beautifulsoup4
+bs4
+Flask
+gunicorn
+lxml
+matplotlib
+numpy
+pandas
+reportlab
+requests
+yfinance

@@ -1,0 +1,57 @@
+body {
+    background-color: #121212; /* Dark background */
+    background-image: linear-gradient(315deg, #121212 0%, #1a1a1a 74%);
+    font-family: 'Poppins', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 1rem;
+}
+
+.container {
+    max-width: 800px;
+}
+
+.card {
+    background-color: #2a2a2a; /* Dark card background */
+    border: 1px solid #444; /* Subtle border */
+    border-radius: 15px;
+}
+
+.card-title {
+    font-weight: 600;
+    color: #ffffff; /* White title text */
+}
+
+/* Style for the dropdowns in dark mode */
+.form-select {
+    background-color: #333;
+    border-color: #555;
+    color: #e0e0e0;
+}
+
+.form-select:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.25rem rgba(0, 123, 255, 0.25);
+}
+
+/* Style for buttons */
+.btn-primary {
+    font-weight: 600;
+    padding: 0.75rem;
+    letter-spacing: 0.5px;
+}
+
+.alert {
+    border-radius: 10px;
+}
+
+.alert-success {
+    background-color: rgba(40, 167, 69, 0.15); /* Greenish background */
+    color: #c8e6c9;
+}
+
+.btn-success {
+    font-weight: 600;
+}
