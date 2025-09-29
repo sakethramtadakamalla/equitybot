@@ -74,6 +74,7 @@ SECTOR_STOCK_MAPPING = {
 PEER_MAPPING = {
     "HDFCBANK.NS": ["ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"],
     "ICICIBANK.NS": ["HDFCBANK.NS", "AXISBANK.NS", "KOTAKBANK.NS", "SBIN.NS"],
+    "SBIN.NS": ["HDFCBANK.NS", "ICICIBANK.NS", "PNB.NS", "BANKBARODA.NS"],
     "INFY.NS": ["TCS.NS", "WIPRO.NS", "TECHM.NS", "HCLTECH.NS"],
     "TCS.NS": ["INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS"],
     "RELIANCE.NS": ["ONGC.NS", "TATAPOWER.NS", "ADANIPOWER.NS"],
@@ -82,8 +83,14 @@ PEER_MAPPING = {
 
 
 # ======================================================================
-# DATA FETCHING AND ANALYSIS FUNCTIONS (UPGRADED)
+# DATA FETCHING AND ANALYSIS FUNCTIONS (CORRECTED)
 # ======================================================================
+
+def get_scalar(value):
+    """Helper function to ensure a value is a single number, not a pandas Series."""
+    if isinstance(value, pd.Series):
+        return value.iloc[0] if not value.empty else None
+    return value
 
 def fetch_price(symbol, period="3y"):
     df = yf.download(symbol, period=period, interval="1d", progress=False, auto_adjust=True)
@@ -91,21 +98,17 @@ def fetch_price(symbol, period="3y"):
 
 def compute_technical_indicators(df):
     if df is None: return None
-    # SMAs
     df['sma_50'] = df['Close'].rolling(window=50).mean()
     df['sma_200'] = df['Close'].rolling(window=200).mean()
-    # Bollinger Bands
     df['bb_mid'] = df['Close'].rolling(window=20).mean()
     df['bb_std'] = df['Close'].rolling(window=20).std()
     df['bb_upper'] = df['bb_mid'] + 2 * df['bb_std']
     df['bb_lower'] = df['bb_mid'] - 2 * df['bb_std']
-    # MACD
     df['ema_12'] = df['Close'].ewm(span=12, adjust=False).mean()
     df['ema_26'] = df['Close'].ewm(span=26, adjust=False).mean()
     df['macd_line'] = df['ema_12'] - df['ema_26']
     df['macd_signal'] = df['macd_line'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = df['macd_line'] - df['macd_signal']
-    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -162,31 +165,42 @@ def get_peer_comparison(peers):
 def interpret_technical(df):
     analysis = []
     latest = df.iloc[-1]
-    # Trend Analysis (SMAs)
-    if pd.notna(latest['sma_50']) and pd.notna(latest['sma_200']):
-        if latest['sma_50'] > latest['sma_200']:
+
+    # Use the get_scalar helper function to ensure we compare single numbers
+    sma_50 = get_scalar(latest['sma_50'])
+    sma_200 = get_scalar(latest['sma_200'])
+    bb_upper = get_scalar(latest['bb_upper'])
+    bb_lower = get_scalar(latest['bb_lower'])
+    close_price = get_scalar(latest['Close'])
+    macd_line = get_scalar(latest['macd_line'])
+    macd_signal = get_scalar(latest['macd_signal'])
+    rsi = get_scalar(latest['rsi'])
+
+    if sma_50 is not None and sma_200 is not None:
+        if sma_50 > sma_200:
             analysis.append("<b>Trend:</b> Bullish Signal (Golden Cross). The short-term 50-day average is above the long-term 200-day average, indicating positive upward momentum.")
         else:
             analysis.append("<b>Trend:</b> Bearish Signal (Death Cross). The 50-day average has crossed below the 200-day average, a negative long-term signal.")
-    # Volatility Analysis (Bollinger Bands)
-    if pd.notna(latest['bb_upper']) and latest['Close'] > latest['bb_upper']:
+    if bb_upper is not None and close_price > bb_upper:
         analysis.append("<b>Volatility:</b> High. The price is trading above the upper Bollinger Band, which can signal an overbought condition.")
-    elif pd.notna(latest['bb_lower']) and latest['Close'] < latest['bb_lower']:
+    elif bb_lower is not None and close_price < bb_lower:
         analysis.append("<b>Volatility:</b> High. The price is below the lower Bollinger Band, suggesting a potential oversold condition.")
-    # Momentum Analysis (MACD)
-    if pd.notna(latest['macd_line']) and pd.notna(latest['macd_signal']):
-        if latest['macd_line'] > latest['macd_signal']:
+    if macd_line is not None and macd_signal is not None:
+        if macd_line > macd_signal:
             analysis.append("<b>Momentum (MACD):</b> Positive. The MACD line is above its signal line, indicating bullish momentum in the short term.")
         else:
             analysis.append("<b>Momentum (MACD):</b> Negative. The MACD line is below its signal line, indicating bearish momentum.")
-    # Strength Analysis (RSI)
-    if pd.notna(latest['rsi']):
-        if latest['rsi'] > 70:
-            analysis.append(f"<b>Strength (RSI):</b> Overbought. The RSI is high at {latest['rsi']:.2f}, suggesting the asset may be overvalued and could be due for a pullback.")
-        elif latest['rsi'] < 30:
-            analysis.append(f"<b>Strength (RSI):</b> Oversold. The RSI is low at {latest['rsi']:.2f}, suggesting the asset may be undervalued and poised for a rebound.")
+    if rsi is not None:
+        if rsi > 70:
+            analysis.append(f"<b>Strength (RSI):</b> Overbought. The RSI is high at {rsi:.2f}, suggesting the asset may be overvalued and could be due for a pullback.")
+        elif rsi < 30:
+            analysis.append(f"<b>Strength (RSI):</b> Oversold. The RSI is low at {rsi:.2f}, suggesting the asset may be undervalued and poised for a rebound.")
         else:
-            analysis.append(f"<b>Strength (RSI):</b> Neutral. The RSI is balanced at {latest['rsi']:.2f}, indicating no immediate overbought or oversold pressure.")
+            analysis.append(f"<b>Strength (RSI):</b> Neutral. The RSI is balanced at {rsi:.2f}, indicating no immediate overbought or oversold pressure.")
+
+    if not analysis:
+        analysis.append("Could not generate a detailed technical analysis due to insufficient data.")
+
     return analysis
 
 def interpret_fundamental(fundamentals):
@@ -216,6 +230,7 @@ def generate_recommendation(fundamentals, tech_analysis):
     if score >= 1: return "HOLD"
     return "SELL"
 
+# --- (The generate_pdf_report function remains the same as the previous version) ---
 def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation):
     stock_name = fundamentals.get('Symbol', 'STOCK')
     filename = f"{stock_name.replace('.', '_')}_Full_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
@@ -249,7 +264,6 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 9), gridspec_kw={'height_ratios': [3, 1, 1]})
         fig.suptitle(f'Technical Analysis for {stock_name}', fontsize=16)
 
-        # Plot 1: Price, SMAs, Bollinger Bands
         ax1.plot(price_df.index, price_df['Close'], label='Close Price', color='blue', linewidth=1.5)
         ax1.plot(price_df.index, price_df['sma_50'], label='50-Day SMA', color='orange', linestyle='--', alpha=0.8)
         ax1.plot(price_df.index, price_df['sma_200'], label='200-Day SMA', color='red', linestyle='--', alpha=0.8)
@@ -260,7 +274,6 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
         ax1.legend()
         ax1.grid(True, linestyle='--', alpha=0.6)
 
-        # Plot 2: MACD
         ax2.plot(price_df.index, price_df['macd_line'], label='MACD Line', color='green')
         ax2.plot(price_df.index, price_df['macd_signal'], label='Signal Line', color='red', linestyle='--')
         ax2.bar(price_df.index, price_df['macd_hist'], label='Histogram', color='gray', alpha=0.5)
@@ -268,14 +281,12 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
         ax2.legend()
         ax2.grid(True, linestyle='--', alpha=0.6)
 
-        # Plot 3: RSI
         ax3.plot(price_df.index, price_df['rsi'], label='RSI', color='purple')
         ax3.axhline(70, linestyle='--', color='red', alpha=0.7); ax3.axhline(30, linestyle='--', color='green', alpha=0.7)
         ax3.set_ylabel('RSI', fontsize=9)
         ax3.legend()
         ax3.grid(True, linestyle='--', alpha=0.6)
 
-        # Improve label visibility for all charts
         for ax in [ax1, ax2, ax3]:
             ax.tick_params(axis='x', labelsize=8, rotation=30, ha='right')
             ax.tick_params(axis='y', labelsize=8)
@@ -289,15 +300,7 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Key Financial Ratios", styles['h3']))
-    ratios_data = [
-        ['Trailing P/E', f"{fundamentals.get('Trailing PE'):.2f}" if fundamentals.get('Trailing PE') else 'N/A'],
-        ['Forward P/E', f"{fundamentals.get('Forward PE'):.2f}" if fundamentals.get('Forward PE') else 'N/A'],
-        ['Price/Book (P/B)', f"{fundamentals.get('Price/Book'):.2f}" if fundamentals.get('Price/Book') else 'N/A'],
-        ['Return on Equity (ROE)', f"{fundamentals.get('ROE')*100:.2f}%" if fundamentals.get('ROE') else 'N/A'],
-        ['Profit Margin', f"{fundamentals.get('Profit Margin')*100:.2f}%" if fundamentals.get('Profit Margin') else 'N/A'],
-        ['Debt to Equity', f"{fundamentals.get('Debt to Equity'):.2f}" if fundamentals.get('Debt to Equity') else 'N/A'],
-        ['Current Ratio', f"{fundamentals.get('Current Ratio'):.2f}" if fundamentals.get('Current Ratio') else 'N/A'],
-    ]
+    ratios_data = [['Trailing P/E', f"{fundamentals.get('Trailing PE'):.2f}" if fundamentals.get('Trailing PE') else 'N/A'], ['Forward P/E', f"{fundamentals.get('Forward PE'):.2f}" if fundamentals.get('Forward PE') else 'N/A'], ['Price/Book (P/B)', f"{fundamentals.get('Price/Book'):.2f}" if fundamentals.get('Price/Book') else 'N/A'], ['Return on Equity (ROE)', f"{fundamentals.get('ROE')*100:.2f}%" if fundamentals.get('ROE') else 'N/A'], ['Profit Margin', f"{fundamentals.get('Profit Margin')*100:.2f}%" if fundamentals.get('Profit Margin') else 'N/A'], ['Debt to Equity', f"{fundamentals.get('Debt to Equity'):.2f}" if fundamentals.get('Debt to Equity') else 'N/A'], ['Current Ratio', f"{fundamentals.get('Current Ratio'):.2f}" if fundamentals.get('Current Ratio') else 'N/A']]
     story.append(Table(ratios_data, style=[('GRID', (0,0), (-1,-1), 1, black), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold')]))
     story.append(Spacer(1, 12))
 
@@ -323,7 +326,6 @@ def generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fu
 # ======================================================================
 
 def create_report(stock_ticker):
-    """This function runs the full analysis for one stock."""
     symbol = stock_ticker
     fundamentals = fetch_company_info(symbol)
     if not fundamentals: raise ValueError(f"Could not get data for {symbol}.")
@@ -339,7 +341,7 @@ def create_report(stock_ticker):
     peer_df = get_peer_comparison(peers)
     news = fetch_news_yfinance(symbol)
 
-    pdf_filename = generate_pdf_report(fundamentals, price_df_tech, news, peer_df, tech_analysis, fund_analysis, recommendation)
+    pdf_filename = generate_pdf_report(fundamentals, price_df, news, peer_df, tech_analysis, fund_analysis, recommendation)
     return pdf_filename
 
 @app.route('/')
